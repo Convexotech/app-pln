@@ -1,0 +1,3 @@
+LeIA
+streamlit
+spacy
