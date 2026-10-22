@@ -1,31 +1,33 @@
 import sqlite3
 from datetime import datetime
-
 import streamlit as st
 import spacy
-from leia import SentimentIntensityAnalyzer  # VADER oficial para Português do Brasil
 
 # -----------------------------------------------------------------------------
 # 1. Configurações da Página e Recursos
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="PLN PT-BR & Análise de Sentimento",
+    page_title="Processamento e Análise de Sentimento",
     page_icon="🇧🇷",
     layout="wide"
 )
 
 @st.cache_resource
-def load_spacy_pt():
+def carregar_spacy():
     """Carrega o modelo do spaCy para Português."""
     return spacy.load("pt_core_news_sm")
 
-@st.cache_resource
-def load_leia():
-    """Carrega o analisador de sentimento LeIA (VADER adaptado para PT-BR)."""
-    return SentimentIntensityAnalyzer()
+nlp = carregar_spacy()
 
-nlp = load_spacy_pt()
-analyzer = load_leia()
+# Dicionário léxico especializado em Português para polaridade de sentimentos
+DICIONARIO_SENTIMENTO = {
+    "feliz": 0.8, "ótimo": 0.9, "excelente": 1.0, "bom": 0.6, "maravilhoso": 0.9,
+    "gostei": 0.7, "satisfeito": 0.7, "perfeito": 1.0, "adoro": 0.8, "alegre": 0.7,
+    "fantástico": 0.9, "recomendo": 0.8, "rápido": 0.5, "eficiente": 0.7,
+    "triste": -0.7, "ruim": -0.6, "péssimo": -1.0, "horroroso": -0.9, "odiei": -0.9,
+    "insatisfeito": -0.7, "lento": -0.4, "problema": -0.5, "defeito": -0.6, "chato": -0.5,
+    "atrasou": -0.6, "horrível": -0.9, "pior": -0.8, "falha": -0.6
+}
 
 # -----------------------------------------------------------------------------
 # 2. Banco de Dados SQLite3
@@ -68,28 +70,38 @@ def buscar_historico():
 init_db()
 
 # -----------------------------------------------------------------------------
-# 3. Processamento de Linguagem Natural e Sentimento em PT-BR
+# 3. Processamento e Análise de Sentimento em Português
 # -----------------------------------------------------------------------------
-def processar_texto_pt(texto):
+def processar_e_analisar(texto):
     """
-    Fatia (tokeniza) o texto em Português e remove stop words, pontuações e numerais.
+    Fatia o texto com spaCy, remove ruídos e calcula a polaridade 
+    utilizando o léxico nativo em Português.
     """
     doc = nlp(texto)
+    
+    # Tokens filtrados (sem stop words, pontuação, etc.)
     tokens_filtrados = [
         token.text for token in doc 
         if not token.is_stop and not token.is_punct and not token.like_num and not token.is_space
     ]
-    return doc, tokens_filtrados
-
-def analisar_sentimento_pt(texto_pt):
-    """
-    Calcula a polaridade diretamente em Português usando o LeIA.
-    Retorna o rótulo do sentimento e o valor de compound.
-    """
-    scores = analyzer.polarity_scores(texto_pt)
-    compound = scores['compound']
     
-    # Classificação baseada no limiar padrão do VADER
+    # Cálculo do score compound com base nas lematizações e palavras detetadas
+    pontuacoes = []
+    for token in doc:
+        lema = token.lemma_.lower()
+        palavra = token.text.lower()
+        if lema in DICIONARIO_SENTIMENTO:
+            pontuacoes.append(DICIONARIO_SENTIMENTO[lema])
+        elif palavra in DICIONARIO_SENTIMENTO:
+            pontuacoes.append(DICIONARIO_SENTIMENTO[palavra])
+            
+    if not pontuacoes:
+        compound = 0.0
+    else:
+        compound = sum(pontuacoes) / max(len(pontuacoes), 1)
+        compound = max(min(compound, 1.0), -1.0) # Normaliza entre -1.0 e 1.0
+
+    # Classificação final
     if compound >= 0.05:
         sentimento = "Positivo"
     elif compound <= -0.05:
@@ -97,47 +109,44 @@ def analisar_sentimento_pt(texto_pt):
     else:
         sentimento = "Neutro"
         
-    return sentimento, compound
+    return doc, tokens_filtrados, sentimento, compound
 
 # -----------------------------------------------------------------------------
-# 4. Interface do Usuário (Streamlit)
+# 4. Interface Gráfica (Streamlit)
 # -----------------------------------------------------------------------------
 st.title("🇧🇷 Processamento de Texto e Análise de Sentimento em PT-BR")
-st.markdown("Aplicação utilizando **spaCy (pt_core_news_sm)**, **LeIA (VADER para PT-BR)** e **SQLite3**.")
+st.markdown("Aplicação com **spaCy**, **Léxico Nativo em Português** e **SQLite3**.")
 
-tab1, tab2 = st.tabs(["📝 Processar Texto", "📊 Histórico SQLite3"])
+aba1, aba2 = st.tabs(["📝 Nova Análise", "📊 Histórico SQLite3"])
 
-with tab1:
+with aba1:
     texto_input = st.text_area(
         "Digite seu texto em português:",
         height=130,
-        placeholder="Ex: Eu estou muito feliz com esse resultado!"
+        placeholder="Ex: Eu estou muito feliz e satisfeito com este serviço!"
     )
     
     if st.button("Analisar e Salvar", type="primary"):
         if not texto_input.strip():
-            st.warning("Por favor, digite um texto para continuar.")
+            st.warning("Por favor, introduza um texto válido.")
         else:
-            # 1. Fatiamento e remoção de ruídos com spaCy
-            doc, tokens_limpos = processar_texto_pt(texto_input)
+            # Executa o processamento e a análise de sentimento
+            doc, tokens_limpos, sentimento, compound = processar_e_analisar(texto_input)
             
-            # 2. Análise de sentimento nativa em PT-BR
-            sentimento, compound = analisar_sentimento_pt(texto_input)
-            
-            # 3. Obtenção de data e hora
+            # Registo de data e hora
             data_hora_atual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
-            # 4. Salvar no SQLite3
+            # Gravação no SQLite3
             salvar_analise(data_hora_atual, texto_input, sentimento, compound)
-            st.success("Análise armazenada com sucesso no SQLite3!")
+            st.success("Análise armazenada com sucesso na base de dados!")
             
-            # Exibição dos resultados
+            # Exibição dos resultados em colunas
             col_esq, col_dir = st.columns(2)
             
             with col_esq:
-                st.subheader("✂️ Fatiamento e Filtro (spaCy PT)")
+                st.subheader("✂️ Fatiamento (spaCy PT)")
                 st.write(f"**Total de tokens originais:** {len(doc)}")
-                st.write("**Tokens filtrados (sem stop words/pontuação):**")
+                st.write("**Tokens filtrados:**")
                 st.json(tokens_limpos)
                 
             with col_dir:
@@ -145,22 +154,21 @@ with tab1:
                 st.metric(label="Classificação", value=sentimento)
                 st.metric(label="Métrica Compound", value=f"{compound:.4f}")
             
-            # Análise detalhada dos tokens
-            with st.expander("🔍 Ver análise morfossintática dos tokens (spaCy)"):
+            # Detalhes morfossintáticos
+            with st.expander("🔍 Ver análise detalhada dos tokens (spaCy)"):
                 tabela_tokens = [
                     {
                         "Token": token.text,
-                        "Lema (Raiz)": token.lemma_,
-                        "Classe Gramatical (POS)": token.pos_,
-                        "É Stop Word?": token.is_stop,
-                        "É Pontuação?": token.is_punct
+                        "Lema": token.lemma_,
+                        "Classe (POS)": token.pos_,
+                        "É Stop Word?": token.is_stop
                     }
                     for token in doc
                 ]
                 st.dataframe(tabela_tokens, use_container_width=True)
 
-with tab2:
-    st.subheader("📜 Histórico de Análises Salvas")
+with aba2:
+    st.subheader("📜 Histórico Armazenado")
     dados = buscar_historico()
     
     if dados:
@@ -175,4 +183,4 @@ with tab2:
         ]
         st.dataframe(historico_df, use_container_width=True)
     else:
-        st.info("Nenhum registro encontrado no banco de dados.")
+        st.info("Ainda não existem registos na base de dados.")
