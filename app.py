@@ -3,7 +3,7 @@ from datetime import datetime
 
 import streamlit as st
 import spacy
-from LeIA import SentimentIntensityAnalyzer  # VADER oficial para Português do Brasil
+from Leia import SentimentIntensityAnalyzer  # VADER oficial para Português do Brasil
 
 # -----------------------------------------------------------------------------
 # 1. Configurações da Página e Recursos
